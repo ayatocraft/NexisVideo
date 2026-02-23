@@ -94,7 +94,12 @@ input{
 </div>
 
 <script>
+const params=new URLSearchParams(location.search);
+const autoFriend=params.get("to");
 
+if(autoFriend){
+ document.getElementById("targetId").value=autoFriend;
+}
 /* ===== ID共有 ===== */
 
 const myId = localStorage.getItem("nexis_id") ||
