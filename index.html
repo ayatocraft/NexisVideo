@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Nexis Video</title>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+<style>
+body{
+  margin:0;
+  font-family:-apple-system;
+  background:#0f0f14;
+  color:white;
+  text-align:center;
+  padding:20px;
+}
+
+video{
+  width:45%;
+  border-radius:12px;
+  background:black;
+}
+
+button{
+  padding:10px;
+  border:none;
+  border-radius:8px;
+  background:#5b7cff;
+  color:white;
+  margin:6px;
+}
+
+input{
+  padding:10px;
+  border-radius:8px;
+  border:none;
+}
+
+.card{
+  background:#1a1a22;
+  padding:20px;
+  border-radius:12px;
+  max-width:420px;
+  margin:15px auto;
+}
+
+</style>
+</head>
+
+<body>
+
+<h2>Nexis Video</h2>
+
+<div class="card">
+<h3 id="myIdText">ID生成中...</h3>
+</div>
+
+<div class="card" id="setup">
+
+<h3>通話相手ID</h3>
+<input id="targetId" placeholder="相手ID">
+<br><br>
+
+<button onclick="startCallWait()">
+🎥 通話を開始
+</button>
+
+</div>
+
+<div id="testScreen" class="card" style="display:none">
+<h3>カメラ / マイク確認</h3>
+
+<video id="testVideo" autoplay muted></video>
+<br>
+<button onclick="enterWaiting()">参加</button>
+</div>
+
+<div id="callScreen" style="display:none">
+
+<h3 id="statusText">相手を待っています...</h3>
+
+<video id="myVideo" autoplay muted></video>
+<video id="peerVideo" autoplay></video>
+
+<br>
+
+<button onclick="toggleCam()">📷</button>
+<button onclick="toggleMic()">🎤</button>
+<button onclick="endCall()" style="background:#ff4d4d">終了</button>
+
+</div>
+
+<script>
+
+/* ===== ID共有 ===== */
+
+const myId = localStorage.getItem("nexis_id") ||
+             crypto.randomUUID();
+
+localStorage.setItem("nexis_id",myId);
+
+const myName = localStorage.getItem("nexis_name") || "Unknown";
+
+document.getElementById("myIdText").innerText=
+"あなたのID: "+myId;
+
+/* ===== Peer ===== */
+
+const peer = new Peer(myId);
+
+let conn;
+let call;
+let targetId;
+let localStream;
+
+/* ===== 通話開始 ===== */
+
+function startCallWait(){
+
+  targetId=document.getElementById("targetId").value.trim();
+  if(!targetId)return;
+
+  document.getElementById("setup").style.display="none";
+  document.getElementById("testScreen").style.display="block";
+
+  prepareMedia();
+}
+
+/* ===== メディアテスト ===== */
+
+async function prepareMedia(){
+
+  localStream = await navigator.mediaDevices.getUserMedia({
+    video:true,
+    audio:true
+  });
+
+  document.getElementById("testVideo").srcObject=localStream;
+
+}
+
+/* ===== 参加 ===== */
+
+function enterWaiting(){
+
+  document.getElementById("testScreen").style.display="none";
+  document.getElementById("callScreen").style.display="block";
+
+  document.getElementById("statusText").innerText=
+    "相手["+targetId+"]を待っています...";
+
+  document.getElementById("myVideo").srcObject=localStream;
+
+  peer.on("call",c=>{
+    c.answer(localStream);
+    handleCall(c);
+  });
+
+  const waitInterval=setInterval(()=>{
+    const c=peer.connect(targetId);
+
+    if(c){
+      clearInterval(waitInterval);
+    }
+  },1500);
+
+}
+
+/* ===== 通話処理 ===== */
+
+function handleCall(c){
+
+  call=c;
+
+  c.on("stream",stream=>{
+    document.getElementById("peerVideo").srcObject=stream;
+    document.getElementById("statusText").innerText="通話中";
+  });
+
+}
+
+/* ===== 制御 ===== */
+
+function toggleCam(){
+  localStream.getVideoTracks()
+    .forEach(t=>t.enabled=!t.enabled);
+}
+
+function toggleMic(){
+  localStream.getAudioTracks()
+    .forEach(t=>t.enabled=!t.enabled);
+}
+
+function endCall(){
+  if(call) call.close();
+  location.reload();
+}
+
+/* ===== PWA ===== */
+
+if("serviceWorker" in navigator){
+ navigator.serviceWorker.register("service-worker.js");
+}
+
+</script>
+
+</body>
+</html>
