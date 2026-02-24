@@ -5,9 +5,6 @@
 <title>Nexis Video</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#0f0f14">
-
 <style>
 body{
   margin:0;
@@ -22,10 +19,10 @@ video{
   border-radius:12px;
 }
 button{
-  padding:15px;
-  font-size:18px;
-  margin:10px;
-  border-radius:10px;
+  padding:12px;
+  font-size:16px;
+  margin:5px;
+  border-radius:8px;
   border:none;
 }
 </style>
@@ -33,7 +30,6 @@ button{
 <body>
 
 <h2>Nexis Video</h2>
-
 <div id="status">接続中...</div>
 
 <div>
@@ -42,19 +38,17 @@ button{
 </div>
 
 <div>
-  <div>
   <button onclick="joinCall()">参加</button>
-  <button onclick="toggleMute()">🎤 ミュート</button>
-  <button onclick="toggleCamera()">📷 カメラOFF</button>
-  <button onclick="switchCamera()">🔄 切替</button>
-  <button onclick="endCall()">❌ 終了</button>
-</div>
+  <button onclick="toggleMute()">🎤</button>
+  <button onclick="toggleCamera()">📷</button>
+  <button onclick="switchCamera()">🔄</button>
+  <button onclick="endCall()">❌</button>
 </div>
 
 <script src="https://cdn.ably.io/lib/ably.min-1.js"></script>
 
 <script>
-const ABLY_KEY = "JW3Hvw.fw1o0A:-zV3VatQkBUx-hVmtwFGE6Bwbv_wG4kIoz7LHOKNawY"; // ←入れて
+const ABLY_KEY = "JW3Hvw.fw1o0A:-zV3VatQkBUx-hVmtwFGE6Bwbv_wG4kIoz7LHOKNawY"; // ←必ず入れる
 
 let myId = localStorage.getItem("nexis_id");
 if(!myId){
@@ -64,7 +58,6 @@ if(!myId){
 
 const params = new URLSearchParams(location.search);
 const targetId = params.get("to");
-
 if(!targetId){
   document.getElementById("status").innerText="相手IDがありません";
   throw "no target";
@@ -80,57 +73,27 @@ const ably = new Ably.Realtime({
 const channel = ably.channels.get(roomId);
 
 let localStream;
-let peer;
+let peer = null;
 let joined = {};
-let localVideo = document.getElementById("localVideo");
-let remoteVideo = document.getElementById("remoteVideo");
+let audioEnabled = true;
+let videoEnabled = true;
+let currentFacing = "user";
+
+const localVideo = document.getElementById("localVideo");
+const remoteVideo = document.getElementById("remoteVideo");
 
 async function initMedia(){
   if(!navigator.mediaDevices){
     alert("HTTPSで開いてください");
     return;
   }
-
   localStream = await navigator.mediaDevices.getUserMedia({
-    video:true,
+    video:{facingMode:currentFacing},
     audio:true
   });
-
   localVideo.srcObject = localStream;
 }
-
 initMedia();
-
-channel.subscribe("signal", async msg=>{
-  const data = msg.data;
-  if(data.from === myId) return;
-
-  if(data.offer){
-    if(!peer) createPeer();
-
-    await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
-    const answer = await peer.createAnswer();
-    await peer.setLocalDescription(answer);
-
-    channel.publish("signal",{answer,from:myId});
-  }
-
-  if(data.answer){
-    await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-  }
-
-  if(data.candidate){
-    await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-  }
-});
-
-channel.subscribe("join", msg=>{
-  joined[msg.data.id]=true;
-
-  if(joined[myId] && joined[targetId]){
-    if(!peer) startCall();
-  }
-});
 
 function createPeer(){
   peer = new RTCPeerConnection({
@@ -159,38 +122,67 @@ function createPeer(){
 
 async function startCall(){
   createPeer();
-
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
-
   channel.publish("signal",{offer,from:myId});
 }
 
+channel.subscribe("signal", async msg=>{
+  const data = msg.data;
+  if(data.from === myId) return;
+
+  if(data.offer){
+    if(!peer) createPeer();
+
+    await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+
+    channel.publish("signal",{answer,from:myId});
+  }
+
+  if(data.answer){
+    if(peer.signalingState !== "stable"){
+      await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+    }
+  }
+
+  if(data.candidate){
+    if(peer){
+      try{
+        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+      }catch(e){}
+    }
+  }
+});
+
+channel.subscribe("join", msg=>{
+  joined[msg.data.id] = true;
+
+  if(joined[myId] && joined[targetId]){
+    // ★ 発信者固定（小さいID側のみoffer）
+    if(myId < targetId){
+      if(!peer) startCall();
+    }
+  }
+});
+
 function joinCall(){
-  joined[myId]=true;
+  joined[myId] = true;
   channel.publish("join",{id:myId});
 }
-  let audioEnabled = true;
-let videoEnabled = true;
-let currentFacing = "user";
 
 function toggleMute(){
   audioEnabled = !audioEnabled;
-  localStream.getAudioTracks().forEach(track=>{
-    track.enabled = audioEnabled;
-  });
+  localStream.getAudioTracks().forEach(t=>t.enabled=audioEnabled);
 }
 
 function toggleCamera(){
   videoEnabled = !videoEnabled;
-  localStream.getVideoTracks().forEach(track=>{
-    track.enabled = videoEnabled;
-  });
+  localStream.getVideoTracks().forEach(t=>t.enabled=videoEnabled);
 }
 
 async function switchCamera(){
-  if(!navigator.mediaDevices) return;
-
   currentFacing = currentFacing === "user" ? "environment" : "user";
 
   const newStream = await navigator.mediaDevices.getUserMedia({
@@ -200,7 +192,7 @@ async function switchCamera(){
 
   const videoTrack = newStream.getVideoTracks()[0];
   const sender = peer.getSenders().find(s=>s.track.kind==="video");
-  sender.replaceTrack(videoTrack);
+  if(sender) sender.replaceTrack(videoTrack);
 
   localStream.getTracks().forEach(t=>t.stop());
   localStream = newStream;
