@@ -13,17 +13,27 @@ body{
   font-family:sans-serif;
   text-align:center;
 }
+
 video{
   width:45%;
   background:black;
   border-radius:12px;
 }
+
+.controls{
+  margin-top:15px;
+}
+
 button{
   padding:12px;
   font-size:16px;
   margin:5px;
   border-radius:8px;
   border:none;
+}
+
+.hidden{
+  display:none;
 }
 </style>
 </head>
@@ -37,18 +47,23 @@ button{
   <video id="remoteVideo" autoplay playsinline></video>
 </div>
 
-<div>
-  <button onclick="joinCall()">参加</button>
+<!-- 参加ボタン -->
+<div id="joinUI" class="controls">
+  <button id="joinBtn" onclick="joinCall()">参加</button>
+</div>
+
+<!-- 通話中コントロール -->
+<div id="callUI" class="controls hidden">
   <button onclick="toggleMute()">🎤</button>
   <button onclick="toggleCamera()">📷</button>
   <button onclick="switchCamera()">🔄</button>
-  <button onclick="endCall()">❌</button>
+  <button onclick="endCall()">❌ 終了</button>
 </div>
 
 <script src="https://cdn.ably.io/lib/ably.min-1.js"></script>
 
 <script>
-const ABLY_KEY = "JW3Hvw.fw1o0A:-zV3VatQkBUx-hVmtwFGE6Bwbv_wG4kIoz7LHOKNawY"; // ←必ず入れる
+const ABLY_KEY = "JW3Hvw.fw1o0A:-zV3VatQkBUx-hVmtwFGE6Bwbv_wG4kIoz7LHOKNawY";
 
 let myId = localStorage.getItem("nexis_id");
 if(!myId){
@@ -81,12 +96,11 @@ let currentFacing = "user";
 
 const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
+const joinBtn = document.getElementById("joinBtn");
+const joinUI = document.getElementById("joinUI");
+const callUI = document.getElementById("callUI");
 
 async function initMedia(){
-  if(!navigator.mediaDevices){
-    alert("HTTPSで開いてください");
-    return;
-  }
   localStream = await navigator.mediaDevices.getUserMedia({
     video:{facingMode:currentFacing},
     audio:true
@@ -95,11 +109,15 @@ async function initMedia(){
 }
 initMedia();
 
+function showCallUI(){
+  joinUI.classList.add("hidden");
+  callUI.classList.remove("hidden");
+  document.getElementById("status").innerText="通話中";
+}
+
 function createPeer(){
   peer = new RTCPeerConnection({
-    iceServers:[
-      {urls:"stun:stun.l.google.com:19302"}
-    ]
+    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
   });
 
   localStream.getTracks().forEach(track=>{
@@ -112,10 +130,7 @@ function createPeer(){
 
   peer.onicecandidate = e=>{
     if(e.candidate){
-      channel.publish("signal",{
-        candidate:e.candidate,
-        from:myId
-      });
+      channel.publish("signal",{candidate:e.candidate,from:myId});
     }
   };
 }
@@ -125,6 +140,7 @@ async function startCall(){
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
   channel.publish("signal",{offer,from:myId});
+  showCallUI();
 }
 
 channel.subscribe("signal", async msg=>{
@@ -133,12 +149,11 @@ channel.subscribe("signal", async msg=>{
 
   if(data.offer){
     if(!peer) createPeer();
-
     await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
-
     channel.publish("signal",{answer,from:myId});
+    showCallUI();
   }
 
   if(data.answer){
@@ -147,12 +162,10 @@ channel.subscribe("signal", async msg=>{
     }
   }
 
-  if(data.candidate){
-    if(peer){
-      try{
-        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-      }catch(e){}
-    }
+  if(data.candidate && peer){
+    try{
+      await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+    }catch(e){}
   }
 });
 
@@ -160,7 +173,6 @@ channel.subscribe("join", msg=>{
   joined[msg.data.id] = true;
 
   if(joined[myId] && joined[targetId]){
-    // ★ 発信者固定（小さいID側のみoffer）
     if(myId < targetId){
       if(!peer) startCall();
     }
@@ -168,6 +180,8 @@ channel.subscribe("join", msg=>{
 });
 
 function joinCall(){
+  joinBtn.disabled = true;
+  joinBtn.innerText = "参加済み";
   joined[myId] = true;
   channel.publish("join",{id:myId});
 }
@@ -207,7 +221,9 @@ function endCall(){
   if(localStream){
     localStream.getTracks().forEach(t=>t.stop());
   }
-  location.reload();
+
+  // Chat画面に戻す
+  window.location.href = "https://ayatocraft.github.io/NexisChat/index.html"; 
 }
 </script>
 
