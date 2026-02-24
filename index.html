@@ -42,7 +42,13 @@ button{
 </div>
 
 <div>
+  <div>
   <button onclick="joinCall()">参加</button>
+  <button onclick="toggleMute()">🎤 ミュート</button>
+  <button onclick="toggleCamera()">📷 カメラOFF</button>
+  <button onclick="switchCamera()">🔄 切替</button>
+  <button onclick="endCall()">❌ 終了</button>
+</div>
 </div>
 
 <script src="https://cdn.ably.io/lib/ably.min-1.js"></script>
@@ -163,6 +169,53 @@ async function startCall(){
 function joinCall(){
   joined[myId]=true;
   channel.publish("join",{id:myId});
+}
+  let audioEnabled = true;
+let videoEnabled = true;
+let currentFacing = "user";
+
+function toggleMute(){
+  audioEnabled = !audioEnabled;
+  localStream.getAudioTracks().forEach(track=>{
+    track.enabled = audioEnabled;
+  });
+}
+
+function toggleCamera(){
+  videoEnabled = !videoEnabled;
+  localStream.getVideoTracks().forEach(track=>{
+    track.enabled = videoEnabled;
+  });
+}
+
+async function switchCamera(){
+  if(!navigator.mediaDevices) return;
+
+  currentFacing = currentFacing === "user" ? "environment" : "user";
+
+  const newStream = await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:currentFacing},
+    audio:true
+  });
+
+  const videoTrack = newStream.getVideoTracks()[0];
+  const sender = peer.getSenders().find(s=>s.track.kind==="video");
+  sender.replaceTrack(videoTrack);
+
+  localStream.getTracks().forEach(t=>t.stop());
+  localStream = newStream;
+  localVideo.srcObject = newStream;
+}
+
+function endCall(){
+  if(peer){
+    peer.close();
+    peer=null;
+  }
+  if(localStream){
+    localStream.getTracks().forEach(t=>t.stop());
+  }
+  location.reload();
 }
 </script>
 
