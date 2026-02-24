@@ -3,215 +3,210 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-
 <title>Nexis Video</title>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f0f14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
-body{
-  margin:0;
-  font-family:-apple-system;
-  background:#0f0f14;
-  color:white;
-  text-align:center;
-  padding:20px;
-}
-
-video{
-  width:45%;
-  border-radius:12px;
-  background:black;
-}
-
-button{
-  padding:10px;
-  border:none;
-  border-radius:8px;
-  background:#5b7cff;
-  color:white;
-  margin:6px;
-}
-
-input{
-  padding:10px;
-  border-radius:8px;
-  border:none;
-}
-
-.card{
-  background:#1a1a22;
-  padding:20px;
-  border-radius:12px;
-  max-width:420px;
-  margin:15px auto;
-}
-
+body{background:#0f0f14;color:white;font-family:sans-serif;text-align:center}
+button{padding:10px 20px;margin:10px;background:#4f46e5;color:white;border:none;border-radius:8px}
+video{width:45%;background:black;border-radius:12px;margin:5px}
+.hidden{display:none}
 </style>
 </head>
-
 <body>
 
 <h2>Nexis Video</h2>
 
-<div class="card">
-<h3 id="myIdText">ID生成中...</h3>
+<div id="waitScreen">
+  <p id="waitText">接続待機中...</p>
 </div>
 
-<div class="card" id="setup">
-
-<h3>通話相手ID</h3>
-<input id="targetId" placeholder="相手ID">
-<br><br>
-
-<button onclick="startCallWait()">
-🎥 通話を開始
-</button>
-
+<div id="previewScreen" class="hidden">
+  <h3>カメラ確認</h3>
+  <video id="localPreview" autoplay playsinline muted></video>
+  <br>
+  <button onclick="joinCall()">参加</button>
 </div>
 
-<div id="testScreen" class="card" style="display:none">
-<h3>カメラ / マイク確認</h3>
-
-<video id="testVideo" autoplay muted></video>
-<br>
-<button onclick="enterWaiting()">参加</button>
-</div>
-
-<div id="callScreen" style="display:none">
-
-<h3 id="statusText">相手を待っています...</h3>
-
-<video id="myVideo" autoplay muted></video>
-<video id="peerVideo" autoplay></video>
-
-<br>
-
-<button onclick="toggleCam()">📷</button>
-<button onclick="toggleMic()">🎤</button>
-<button onclick="endCall()" style="background:#ff4d4d">終了</button>
-
+<div id="callScreen" class="hidden">
+  <video id="localVideo" autoplay playsinline muted></video>
+  <video id="remoteVideo" autoplay playsinline></video>
+  <br>
+  <button onclick="toggleMic()">Mic</button>
+  <button onclick="toggleCam()">Cam</button>
+  <button onclick="endCall()">終了</button>
 </div>
 
 <script>
-const params=new URLSearchParams(location.search);
-const autoFriend=params.get("to");
+/* ========= 設定 ========= */
+const ABLY_KEY = "YOUR_ABLY_API_KEY";
+const ably = new Ably.Realtime(ABLY_KEY);
 
-if(autoFriend){
- document.getElementById("targetId").value=autoFriend;
+/* ========= ID取得 ========= */
+const params = new URLSearchParams(location.search);
+const myId = localStorage.getItem("nexis_id");
+const targetId = params.get("to");
+
+if(!myId || !targetId){
+  alert("IDエラー");
 }
-/* ===== ID共有 ===== */
 
-const myId = localStorage.getItem("nexis_id") ||
-             crypto.randomUUID();
+/* ========= チャンネル統一 ========= */
+const roomId = [myId,targetId].sort().join("-");
+const channel = ably.channels.get("call-"+roomId);
 
-localStorage.setItem("nexis_id",myId);
-
-const myName = localStorage.getItem("nexis_name") || "Unknown";
-
-document.getElementById("myIdText").innerText=
-"あなたのID: "+myId;
-
-/* ===== Peer ===== */
-
-const peer = new Peer(myId);
-
-let conn;
-let call;
-let targetId;
+/* ========= 状態管理 ========= */
 let localStream;
+let peer;
+let readyMembers = new Set();
+let joinedMembers = new Set();
 
-/* ===== 通話開始 ===== */
+/* ========= 待機状態 ========= */
+channel.presence.enter(myId);
 
-function startCallWait(){
+channel.presence.subscribe("enter", member=>{
+  readyMembers.add(member.clientId);
+  checkReady();
+});
 
-  targetId=document.getElementById("targetId").value.trim();
-  if(!targetId)return;
+channel.presence.get().then(members=>{
+  members.forEach(m=>readyMembers.add(m.clientId));
+  checkReady();
+});
 
-  document.getElementById("setup").style.display="none";
-  document.getElementById("testScreen").style.display="block";
-
-  prepareMedia();
+function checkReady(){
+  if(readyMembers.has(myId) && readyMembers.has(targetId)){
+    document.getElementById("waitScreen").classList.add("hidden");
+    startPreview();
+  }else{
+    document.getElementById("waitText").innerText=
+      "相手を待っています...";
+  }
 }
 
-/* ===== メディアテスト ===== */
-
-async function prepareMedia(){
+/* ========= プレビュー ========= */
+async function startPreview(){
+  document.getElementById("previewScreen").classList.remove("hidden");
 
   localStream = await navigator.mediaDevices.getUserMedia({
     video:true,
     audio:true
   });
 
-  document.getElementById("testVideo").srcObject=localStream;
-
+  document.getElementById("localPreview").srcObject=localStream;
 }
 
-/* ===== 参加 ===== */
+/* ========= 参加 ========= */
+function joinCall(){
+  joinedMembers.add(myId);
+  channel.publish("join",{id:myId});
+}
 
-function enterWaiting(){
+channel.subscribe("join", msg=>{
+  joinedMembers.add(msg.data.id);
+  if(joinedMembers.has(myId) && joinedMembers.has(targetId)){
+    startCall();
+  }
+});
 
-  document.getElementById("testScreen").style.display="none";
-  document.getElementById("callScreen").style.display="block";
-
-  document.getElementById("statusText").innerText=
-    "相手["+targetId+"]を待っています...";
-
-  document.getElementById("myVideo").srcObject=localStream;
-
-  peer.on("call",c=>{
-    c.answer(localStream);
-    handleCall(c);
+/* ========= WebRTC ========= */
+function createPeer(){
+  peer = new RTCPeerConnection({
+    iceServers:[{urls:"stun:stun.l.google.com:19302"}]
   });
 
-  const waitInterval=setInterval(()=>{
-    const c=peer.connect(targetId);
+  localStream.getTracks().forEach(track=>{
+    peer.addTrack(track,localStream);
+  });
 
-    if(c){
-      clearInterval(waitInterval);
+  peer.ontrack = e=>{
+    document.getElementById("remoteVideo").srcObject=e.streams[0];
+  };
+
+  peer.onicecandidate = e=>{
+    if(e.candidate){
+      channel.publish("signal",{
+        type:"ice",
+        candidate:e.candidate
+      });
     }
-  },1500);
-
+  };
 }
 
-/* ===== 通話処理 ===== */
+/* ========= 通話開始 ========= */
+async function startCall(){
 
-function handleCall(c){
+  document.getElementById("previewScreen").classList.add("hidden");
+  document.getElementById("callScreen").classList.remove("hidden");
 
-  call=c;
+  document.getElementById("localVideo").srcObject=localStream;
 
-  c.on("stream",stream=>{
-    document.getElementById("peerVideo").srcObject=stream;
-    document.getElementById("statusText").innerText="通話中";
-  });
+  createPeer();
 
+  const isCaller = myId < targetId;
+
+  if(isCaller){
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    channel.publish("signal",{type:"offer",offer});
+  }
 }
 
-/* ===== 制御 ===== */
+/* ========= シグナル受信 ========= */
+channel.subscribe("signal", async msg=>{
+  const data = msg.data;
+
+  if(data.type==="offer"){
+    if(!peer) createPeer();
+    await peer.setRemoteDescription(
+      new RTCSessionDescription(data.offer)
+    );
+
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+
+    channel.publish("signal",{type:"answer",answer});
+  }
+
+  if(data.type==="answer"){
+    await peer.setRemoteDescription(
+      new RTCSessionDescription(data.answer)
+    );
+  }
+
+  if(data.type==="ice"){
+    if(peer){
+      await peer.addIceCandidate(
+        new RTCIceCandidate(data.candidate)
+      );
+    }
+  }
+});
+
+/* ========= 操作 ========= */
+function toggleMic(){
+  localStream.getAudioTracks()[0].enabled=
+  !localStream.getAudioTracks()[0].enabled;
+}
 
 function toggleCam(){
-  localStream.getVideoTracks()
-    .forEach(t=>t.enabled=!t.enabled);
-}
-
-function toggleMic(){
-  localStream.getAudioTracks()
-    .forEach(t=>t.enabled=!t.enabled);
+  localStream.getVideoTracks()[0].enabled=
+  !localStream.getVideoTracks()[0].enabled;
 }
 
 function endCall(){
-  if(call) call.close();
+  if(peer) peer.close();
   location.reload();
 }
-
-/* ===== PWA ===== */
-
-if("serviceWorker" in navigator){
- navigator.serviceWorker.register("service-worker.js");
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js");
+  });
 }
-
 </script>
-
 </body>
 </html>
